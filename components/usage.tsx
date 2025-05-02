@@ -1,71 +1,73 @@
-import { auth } from "@/auth";
+'use client'
+
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { stripe } from "@/lib/stripe";
+import { useEffect, useState } from "react";
 
-export default async function Usage() {
-  const session = await auth()
+export default function Usage() {
+  const [usageData, setUsageData] = useState({
+    usageCount: 0,
+    usageLimit: Infinity,
+    usagePercentage: 0
+  });
+  const [loading, setLoading] = useState(true);
+  
+  useEffect(() => {
+    // Fetch user data from API
+    const fetchUserData = async () => {
+      try {
+        const response = await fetch('/api/user');
+        const data = await response.json();
+        
+        if (data.authenticated && data.user) {
+          const usageCount = data.user.usageCount;
+          
+          setUsageData({
+            usageCount,
+            usageLimit: Infinity,
+            usagePercentage: 0
+          });
+        }
+      } catch (error) {
+        console.error('Error fetching user data:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchUserData();
+  }, []);
 
-  const customer = await stripe.customers.list({
-      email: session?.user?.email || undefined,
-      expand: ['data.subscriptions']
-    }).then(res => res.data[0])
-
-  const subscription = customer?.subscriptions?.data[0];
-
-  const meteredPricesWithTiers = await Promise.all(
-    subscription?.items.data
-      .filter(item => item.price.recurring?.usage_type === 'metered')
-      .map(async (item) => {
-        // Get full price details including tiers
-        const priceDetails = await stripe.prices.retrieve(item.price.id, {
-          expand: ['tiers']
-        });
-
-        // Get current usage
-        const usage = item.price.recurring?.meter && await stripe.billing.meters.listEventSummaries(
-          item.price.recurring.meter,
-          {
-            customer: customer?.id || '',
-            start_time: subscription.current_period_start!,
-            end_time: subscription.current_period_end!,
-          }
-        );
-
-        return {
-          priceId: item.price.id,
-          currentUsage: typeof usage === 'object' ? usage?.data[0]?.aggregated_value ?? 0 : 0,
-          tiers: priceDetails.tiers,
-          meter: item.price.recurring?.meter,
-          interval: item.price.recurring?.interval
-        };
-      }) ?? []
-  );
-
-  const usage = meteredPricesWithTiers[0]?.currentUsage || 0;
-  const limit = meteredPricesWithTiers[0]?.tiers?.[0]?.up_to ?? 0;
-
-  const usagePercentage = usage === 0 || limit === 0 ? 0 : (usage / limit) * 100;
+  if (loading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Usage</CardTitle>
+          <CardDescription>Loading usage data...</CardDescription>
+        </CardHeader>
+        <CardContent className="h-24 flex items-center justify-center">
+          <div className="animate-pulse w-full h-4 bg-gray-200 rounded"></div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Usage</CardTitle>
-        <CardDescription>Total posts replied this month</CardDescription>
+        <CardDescription>Total posts replied</CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="text-2xl font-bold mb-2">{usage} {limit > 0 ? `/ ${limit}` : ''}</div>
-        {limit > 0 && (
-          <Progress value={usagePercentage} className="w-full" />
-        )}
+        <div className="text-2xl font-bold mb-2">
+          {usageData.usageCount} <span className="text-muted-foreground text-sm">(Unlimited)</span>
+        </div>
       </CardContent>
-      {limit > 0 && (
       <CardFooter>
         <p className="text-sm text-muted-foreground">
-          {usagePercentage >= 100 ? 'Usage limit reached' : `${Math.round(usagePercentage)}% of limit used`}
+          You have unlimited usage with no restrictions
         </p>
       </CardFooter>
-      )}
     </Card>
   )
 }

@@ -1,7 +1,7 @@
 'use client'
 
 import { toast } from "@/hooks/use-toast";
-import { contact } from "@/lib/stripe/action";
+import { contact } from "@/lib/actions";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";

@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { decodeLicenseKey } from "@/lib/utils";
-import { recordUsagetoMeterForBilling, stripe } from "@/lib/stripe";
-import type Stripe from "stripe";
 import { generateObject } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { z } from "zod";
+import { verifyLicenseKey, recordUsage, ADMIN_LICENSE_KEY } from "@/lib/store";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -20,36 +18,16 @@ export async function POST(request: NextRequest) {
   const license: string | undefined = request.headers
     .get("Authorization")
     ?.split("Bearer ")[1];
+  const userEmail = request.headers.get("Email");
 
-  let subscriptionId: Stripe.Subscription["id"];
+  // Check if license key is valid or if it's the admin key
+  const isValidLicense = license === ADMIN_LICENSE_KEY || verifyLicenseKey(license as string);
 
-  try {
-    subscriptionId = decodeLicenseKey(license as string);
-  } catch (error) {
+  if (!isValidLicense) {
     return NextResponse.json(
       {
-        error: "Invalid license key format",
-        details:
-          error instanceof Error ? error.message : "Failed to decode license",
-      },
-      {
-        status: 401,
-        headers: corsHeaders,
-      }
-    );
-  }
-
-  let subscription: Stripe.Subscription;
-  try {
-    subscription = await stripe.subscriptions.retrieve(subscriptionId);
-  } catch (error) {
-    throw NextResponse.json(
-      {
-        error: "Invalid subscription",
-        details:
-          error instanceof Error
-            ? error.message
-            : "Failed to retrieve subscription",
+        error: "Invalid license key",
+        details: "The provided license key is not valid",
       },
       {
         status: 401,
@@ -59,30 +37,30 @@ export async function POST(request: NextRequest) {
   }
 
   if (req.type === "SET_API_KEY") {
-    if (subscription.status !== "active") {
-      return NextResponse.json(
-        { error: "Subscription not active" },
-        { status: 403, headers: corsHeaders }
-      );
-    }
-
     return NextResponse.json(
-      { message: "Subscription active" },
+      { message: "License key is valid" },
       { headers: corsHeaders }
     );
   }
 
   try {
-    if (subscription.status !== "active") {
-      return NextResponse.json(
-        { error: "Subscription not active" },
-        { status: 403, headers: corsHeaders }
-      );
+    // Record usage if email is provided (for authenticated users)
+    if (userEmail && license !== ADMIN_LICENSE_KEY) {
+      const usageResult = recordUsage(userEmail);
+      
+      if (!usageResult.success) {
+        return NextResponse.json(
+          { 
+            error: "Usage limit reached", 
+            details: `You have reached your usage limit of ${usageResult.usageLimit}. Please upgrade to continue.`
+          },
+          { 
+            status: 403, 
+            headers: corsHeaders 
+          }
+        );
+      }
     }
-
-    const customer: Stripe.Customer = (await stripe.customers.retrieve(
-      subscription.customer as string
-    )) as Stripe.Customer;
 
     let systemPrompt = `You will be provided with a ${req.src} post ${
       req.comment ? "and comments" : ""
@@ -115,13 +93,11 @@ export async function POST(request: NextRequest) {
       }),
     });
 
-    recordUsagetoMeterForBilling(subscription, customer);
-
     return NextResponse.json(result.object, { headers: corsHeaders });
   } catch (error) {
     return NextResponse.json(
       { error: error },
-      { status: 401, headers: corsHeaders }
+      { status: 500, headers: corsHeaders }
     );
   }
 }

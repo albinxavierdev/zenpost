@@ -1,41 +1,112 @@
+'use client'
+
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Check } from "lucide-react";
-import { stripe, stripePrice } from "@/lib/stripe";
-import { checkout } from "@/lib/stripe/action";
 import { cn } from "@/lib/utils";
+import { upgradeToPremium } from "@/lib/store";
+import { auth } from "@/auth";
+import { toast } from "@/hooks/use-toast";
+import { useState } from "react";
 
 interface PricingProps {
   pathname?: string;
 }
 
-export default async function Pricing({ pathname }: PricingProps) {
+const pricingPlans = [
+  {
+    id: "free",
+    name: "Free",
+    description: "Perfect for trying out",
+    price: "€0",
+    interval: "forever",
+    features: [
+      "10 AI reply generations",
+      "Basic tone selection",
+      "Twitter support",
+    ],
+    primary: false
+  },
+  {
+    id: "pro",
+    name: "Pro",
+    description: "Ideal for regular users",
+    price: "€5.99",
+    interval: "month",
+    features: [
+      "500 AI reply generations",
+      "Advanced tone selection",
+      "Twitter and LinkedIn support",
+      "Custom prompts",
+      "Priority support"
+    ],
+    primary: true
+  },
+  {
+    id: "unlimited",
+    name: "Unlimited",
+    description: "Best for power users",
+    price: "€49.99",
+    interval: "year",
+    features: [
+      "Unlimited AI reply generations",
+      "All social platforms",
+      "Custom prompts",
+      "Advanced customization",
+      "Priority support",
+      "Early access to new features"
+    ],
+    primary: false
+  }
+];
+
+export default function Pricing({ pathname }: PricingProps) {
   const currentPath = pathname || '/dashboard';
+  const [upgrading, setUpgrading] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
 
-  const [products, prices] = await Promise.all([
-    stripe.products.list({
-      active: true,
-      expand: ["data.default_price"],
-    }),
-    stripe.prices.list({
-      active: true,
-      type: "recurring"
-    })
-  ]);
-
-  // Filter for prices with non-null amounts (flat fees)
-  const licensedPrices = prices.data.filter(price =>
-    price.unit_amount !== null
-  );
-
-  // Group licensed prices by productId
-  const baseProductPrices = licensedPrices.reduce((acc, price) => {
-    const productId = typeof price.product === "string" ? price.product : price.product.id;
-    if (!acc[productId]) {
-      acc[productId] = price;
+  const handleUpgrade = async (planId: string) => {
+    setUpgrading(true);
+    setSelectedPlan(planId);
+    
+    try {
+      const session = await auth();
+      if (!session?.user?.email) {
+        toast({
+          title: "Error",
+          description: "You must be logged in to upgrade",
+          variant: "destructive"
+        });
+        return;
+      }
+      
+      const result = upgradeToPremium(session.user.email);
+      
+      if (result.success) {
+        toast({
+          title: "Upgrade successful!",
+          description: "Your account has been upgraded successfully"
+        });
+        // Reload the page to show the updated status
+        window.location.reload();
+      } else {
+        toast({
+          title: "Upgrade failed",
+          description: "There was a problem upgrading your account",
+          variant: "destructive"
+        });
+      }
+    } catch (error) {
+      toast({
+        title: "Upgrade failed",
+        description: "There was a problem upgrading your account",
+        variant: "destructive"
+      });
+    } finally {
+      setUpgrading(false);
+      setSelectedPlan(null);
     }
-    return acc;
-  }, {} as Record<string, stripePrice>);
+  };
 
   return (
     <Card id="pricing" className="mt-6">
@@ -53,45 +124,39 @@ export default async function Pricing({ pathname }: PricingProps) {
         </CardHeader>
       )}
       <CardContent className={cn(currentPath==='/' && "container mx-auto px-4", "grid gap-6 md:grid-cols-3")}>
-        {[...products.data].reverse().map((product) => {
-          const basePrice = baseProductPrices[product.id];
-          if (!basePrice) return null;
-
-          return (
-
-          <Card key={product.id} className={`flex flex-col ${product.name === 'Unlimited' ? 'border-primary' : ''}`}>
+        {pricingPlans.map((plan) => (
+          <Card key={plan.id} className={`flex flex-col ${plan.primary ? 'border-primary' : ''}`}>
             <CardHeader>
-              <CardTitle className={product.name === 'Unlimited' ? 'text-primary' : ''}>{product.name}</CardTitle>
+              <CardTitle className={plan.primary ? 'text-primary' : ''}>{plan.name}</CardTitle>
               <CardDescription>
-                <span className="text-3xl font-bold">€{((basePrice.unit_amount ?? 0)/100).toFixed(2)}</span>
-                <span className="text-muted-foreground"> /{basePrice?.recurring?.interval || 'month'}</span>
+                <span className="text-3xl font-bold">{plan.price}</span>
+                <span className="text-muted-foreground"> /{plan.interval}</span>
               </CardDescription>
             </CardHeader>
             <CardContent className="flex-grow">
-              <p className="text-sm text-muted-foreground mb-4">{product.description}</p>
+              <p className="text-sm text-muted-foreground mb-4">{plan.description}</p>
               <ul className="space-y-2">
-                {product.marketing_features?.map((feature, i) => (
+                {plan.features.map((feature, i) => (
                   <li key={i} className="flex items-center">
-                    <Check className={`h-4 w-4 mr-2 ${product.name === 'Unlimited' ? 'text-primary' : 'text-green-500'}`} />
+                    <Check className={`h-4 w-4 mr-2 ${plan.primary ? 'text-primary' : 'text-green-500'}`} />
                     <span className="text-sm">
-                      {feature.name}
+                      {feature}
                     </span>
                   </li>
                 ))}
               </ul>
             </CardContent>
             <CardFooter>
-              <form action={checkout} className="w-full">
-                <input type="hidden" name="productId" value={product.id} />
-                <Button type="submit"
-                  className={`w-full ${product.name === 'Unlimited' ? 'bg-primary hover:bg-primary/90' : ''}`}
-                >
-                  Choose {product.name}
-                </Button>
-              </form>
+              <Button 
+                className={`w-full ${plan.primary ? 'bg-primary hover:bg-primary/90' : ''}`}
+                onClick={() => handleUpgrade(plan.id)}
+                disabled={upgrading}
+              >
+                {upgrading && selectedPlan === plan.id ? "Processing..." : `Choose ${plan.name}`}
+              </Button>
             </CardFooter>
           </Card>
-        )})}
+        ))}
       </CardContent>
     </Card>
   )

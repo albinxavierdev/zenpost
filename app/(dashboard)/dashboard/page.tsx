@@ -1,5 +1,4 @@
 import { auth } from "@/auth";
-import { stripe} from "@/lib/stripe"
 import Welcome from "@/components/welcome";
 import Subscription from "@/components/subscription";
 import Usage from "@/components/usage";
@@ -11,16 +10,13 @@ import PortalSkeleton from "@/components/portal-skeleton";
 import SubscriptionSkeleton from "@/components/subscription-skeleton";
 import UsageSkeleton from "@/components/usage-skeleton";
 import WelcomeSkeleton from "@/components/welcome-skeleton";
+import { getUserData } from "@/lib/store";
 
 export default async function Dashboard() {
-  const session = await auth()
-
-  const customer = await stripe.customers.list({
-    email: session?.user?.email || undefined,
-    expand: ['data.subscriptions']
-  }).then(res => res.data[0]);
-
-  const subscription = customer?.subscriptions?.data[0];
+  const session = await auth();
+  
+  // Check if the user is premium or not
+  const isPremium = session?.user ? getUserData(session.user).isPremium : false;
 
   return (
     <main className="container mx-auto p-4 max-w-3xl">
@@ -37,7 +33,7 @@ export default async function Dashboard() {
         </Suspense>
       </div>
       <div className="mt-6">
-        {subscription ? (
+        {isPremium ? (
           <Suspense fallback={<PortalSkeleton />}>
             <Portal />
           </Suspense>
